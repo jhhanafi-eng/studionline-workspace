@@ -7,7 +7,8 @@ const AGENCY_OS = {
   DB_PROPERTY: 'AGENCY_OS_DB_ID',
   SHEETS: {
     Workspaces: ['workspace_id', 'name', 'type', 'status', 'timezone', 'brand_brief_json', 'created_at', 'updated_at'],
-    Tasks: ['task_id', 'workspace_id', 'project_id', 'campaign_id', 'department', 'task_type', 'title', 'description', 'priority', 'execution_status', 'lifecycle_status', 'assigned_agent', 'input_json', 'output_json', 'attempt_count', 'max_attempts', 'created_at', 'updated_at'],
+    Tasks: ['task_id', 'workspace_id', 'project_id', 'campaign_id', 'department', 'task_type', 'title', 'description', 'priority', 'execution_status', 'lifecycle_status', 'assigned_agent', 'input_json', 'output_json', 'attempt_count', 'max_attempts', 'run_after', 'lease_until', 'idempotency_key', 'error_message', 'workflow_id', 'parent_task_id', 'step_index', 'created_at', 'updated_at'],
+    AgentRuns: ['run_id', 'workspace_id', 'task_id', 'department', 'provider', 'model', 'status', 'usage_json', 'output_json', 'created_at'],
     AuditLog: ['event_id', 'workspace_id', 'actor_type', 'actor_id', 'event_type', 'entity_type', 'entity_id', 'details_json', 'created_at']
   },
   DEPARTMENTS: ['Research & Strategy', 'Content Planner', 'Scriptwriter', 'Creative Production', 'Quality Control', 'Approval Manager', 'Social Distribution', 'Performance Analytics']
@@ -39,12 +40,13 @@ function setupAgencyOS() {
   Object.keys(AGENCY_OS.SHEETS).forEach(function(name) {
     let sheet = ss.getSheetByName(name);
     if (!sheet) sheet = ss.insertSheet(name);
-    const headers = AGENCY_OS.SHEETS[name];
-    if (sheet.getLastRow() === 0) {
-      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-      sheet.setFrozenRows(1);
-    }
+    ensureHeaders_(sheet, AGENCY_OS.SHEETS[name]);
   });
+
+  const props = PropertiesService.getScriptProperties();
+  if (!props.getProperty('AGENCY_OS_MODEL')) props.setProperty('AGENCY_OS_MODEL', 'gemini-3.5-flash-lite');
+  if (!props.getProperty('AGENCY_OS_WORKERS_PAUSED')) props.setProperty('AGENCY_OS_WORKERS_PAUSED', 'true');
+  if (!props.getProperty('AGENCY_OS_MAX_DAILY_RUNS')) props.setProperty('AGENCY_OS_MAX_DAILY_RUNS', '30');
 
   const workspaces = readRows_('Workspaces');
   const ownerWorkspace = workspaces.find(function(row) { return row.workspace_id === 'ws_studionline'; });
@@ -68,7 +70,7 @@ function setupAgencyOS() {
     databaseId: dbId,
     databaseUrl: ss.getUrl(),
     sheets: Object.keys(AGENCY_OS.SHEETS),
-    message: 'Database initialized. AI workers and external actions remain disabled.'
+    message: 'Database initialized. Gemini gateway is configured for low-cost mode; workers remain paused until an API key is added and enableAgencyWorkers() is run.'
   };
 }
 
@@ -87,7 +89,7 @@ function apiGetDashboard(workspaceId) {
     else if (s === 'FAILED') counts.failed++;
     else if (s === 'SUCCEEDED') counts.completed++;
   });
-  return {ok: true, workspaceId: selectedId, workspaces: workspaces, counts: counts, tasks: recent, runtime: {aiGateway: 'NOT_CONFIGURED', worker: 'DISABLED', externalActions: 'DISABLED'}};
+  return {ok: true, workspaceId: selectedId, workspaces: workspaces, counts: counts, tasks: recent, runtime: {aiGateway: PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY') ? 'CONFIGURED' : 'API_KEY_REQUIRED', provider: 'gemini', model: PropertiesService.getScriptProperties().getProperty('AGENCY_OS_MODEL') || 'gemini-3.5-flash-lite', worker: PropertiesService.getScriptProperties().getProperty('AGENCY_OS_WORKERS_PAUSED') === 'false' ? 'ENABLED' : 'PAUSED', externalActions: 'DISABLED'}};
 }
 
 function apiCreateWorkspace(input) {
@@ -149,6 +151,18 @@ function apiListTasks(workspaceId) {
   const id = workspaceId || 'ws_studionline';
   requireWorkspace_(id);
   return {ok: true, tasks: readRows_('Tasks').filter(function(t) { return t.workspace_id === id; }).reverse()};
+}
+
+function ensureHeaders_(sheet, requiredHeaders) {
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, requiredHeaders.length).setValues([requiredHeaders]);
+    sheet.setFrozenRows(1);
+    return;
+  }
+  const existing = sheet.getRange(1, 1, 1, Math.max(1, sheet.getLastColumn())).getValues()[0].map(String);
+  const missing = requiredHeaders.filter(function(header) { return existing.indexOf(header) === -1; });
+  if (missing.length) sheet.getRange(1, existing.length + 1, 1, missing.length).setValues([missing]);
+  sheet.setFrozenRows(1);
 }
 
 function getDatabase_() {
