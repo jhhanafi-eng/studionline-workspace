@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root{color-scheme:dark;--bg:#08111F;--panel:#101D30;--panel2:#14243A;--line:#24364F;--text:#E8F0FC;--muted:#91A4BD;--blue:#2563EB;--cyan:#38BDF8;--purple:#8B5CF6}
+    *{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 80% -10%,#1a2d50 0,transparent 38%),var(--bg);color:var(--text);font:14px/1.5 Inter,Arial,sans-serif}
+    .shell{max-width:1180px;margin:auto;padding:28px 22px 60px}.top{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:28px}
+    .brand{display:flex;align-items:center;gap:12px}.mark{width:42px;height:42px;border-radius:13px;background:linear-gradient(135deg,var(--blue),var(--cyan),var(--purple));display:grid;place-items:center;font-weight:800;color:white;font-size:19px}
+    h1{font-size:19px;margin:0;letter-spacing:.2px}.sub{color:var(--muted);font-size:12px}.toolbar{display:flex;gap:10px;align-items:center}
+    select,input,textarea{background:#0B1728;color:var(--text);border:1px solid var(--line);border-radius:9px;padding:10px 12px;font:inherit;min-width:0}
+    button{border:0;border-radius:9px;padding:10px 14px;background:linear-gradient(110deg,var(--blue),#4F46E5);color:white;font-weight:650;cursor:pointer}
+    button:disabled{opacity:.55;cursor:wait}.hero{display:flex;justify-content:space-between;align-items:end;gap:18px;margin:26px 0 18px}.hero h2{font-size:25px;margin:0 0 5px}.hero p{margin:0;color:var(--muted)}
+    .grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}.card,.panel{background:linear-gradient(160deg,rgba(20,36,58,.96),rgba(13,25,42,.96));border:1px solid var(--line);border-radius:15px;padding:16px}
+    .metric{font-size:26px;font-weight:750;margin-top:7px}.label{color:var(--muted);font-size:12px}.layout{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(270px,.8fr);gap:14px;margin-top:15px}
+    .panel h3{margin:0 0 14px;font-size:15px}.task{padding:12px 0;border-top:1px solid var(--line);display:flex;justify-content:space-between;gap:12px}.task:first-of-type{border-top:0}
+    .task-title{font-weight:650}.task-meta{font-size:12px;color:var(--muted);margin-top:3px}.pill{font-size:10px;padding:4px 8px;border-radius:99px;border:1px solid #36516F;color:#B7D7F5;white-space:nowrap;height:max-content}
+    .form{display:grid;gap:10px}.form label{font-size:12px;color:var(--muted);display:grid;gap:5px}.form textarea{min-height:72px;resize:vertical}
+    .notice{padding:11px 13px;border:1px solid #36516F;background:#10243A;border-radius:10px;color:#B7D7F5;font-size:12px;margin:15px 0}
+    .error{color:#FCA5A5}.empty{color:var(--muted);padding:18px 0}.foot{margin-top:18px;color:var(--muted);font-size:11px}
+    @media(max-width:800px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.layout{grid-template-columns:1fr}.top{align-items:flex-start;flex-direction:column}.toolbar{width:100%}.toolbar select{flex:1}.hero{align-items:flex-start;flex-direction:column}}
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="top">
+      <div class="brand"><div class="mark">S</div><div><h1>Karyawan Agency STUDIONLINE</h1><div class="sub">Hybrid Autonomous Agency OS · Foundation v0.1</div></div></div>
+      <div class="toolbar"><select id="workspace" aria-label="Active workspace"></select><button id="refresh" type="button">Refresh</button></div>
+    </header>
+    <section class="hero">
+      <div><h2>Agency Control Center</h2><p>Monitor workspaces, task queues and department activity.</p></div>
+      <div class="sub" id="runtime">Checking system status…</div>
+    </section>
+    <div class="notice">Safe mode is active. This foundation can store workspaces and tasks. AI execution, social publishing, messaging and spending are not enabled in this build.</div>
+    <section class="grid" aria-label="Task summary">
+      <div class="card"><div class="label">Total Tasks</div><div class="metric" id="m-total">0</div></div>
+      <div class="card"><div class="label">Queued</div><div class="metric" id="m-queued">0</div></div>
+      <div class="card"><div class="label">Running</div><div class="metric" id="m-running">0</div></div>
+      <div class="card"><div class="label">Blocked</div><div class="metric" id="m-blocked">0</div></div>
+      <div class="card"><div class="label">Completed</div><div class="metric" id="m-completed">0</div></div>
+    </section>
+    <section class="layout">
+      <div class="panel"><h3>Recent Tasks</h3><div id="tasks" class="empty">Loading tasks…</div></div>
+      <div class="panel">
+        <h3>Create Work Item</h3>
+        <form id="task-form" class="form">
+          <label>Task title<input id="task-title" required maxlength="180" placeholder="e.g. Research Motionflow Creator Kit audience"></label>
+          <label>Department<select id="department"></select></label>
+          <label>Description<textarea id="task-description" placeholder="What should this department deliver?"></textarea></label>
+          <label>Priority<select id="priority"><option>NORMAL</option><option>HIGH</option><option>LOW</option></select></label>
+          <button id="create-task" type="submit">Add to Task Queue</button>
+        </form>
+      </div>
+    </section>
+    <div class="foot">Workspace data is scoped by workspace ID. Deployment and database initialization must be performed by the owner in Google Apps Script.</div>
+    <div id="message" class="sub" role="status" aria-live="polite"></div>
+  </main>
+<script>
+  const DEPARTMENTS = ['Research & Strategy','Content Planner','Scriptwriter','Creative Production','Quality Control','Approval Manager','Social Distribution','Performance Analytics'];
+  const $ = id => document.getElementById(id);
+  let activeWorkspace = 'ws_studionline';
+
+  function fillSelect(select, items, valueKey, labelKey) {
+    select.replaceChildren();
+    items.forEach(item => {
+      const option = document.createElement('option');
+      option.value = item[valueKey]; option.textContent = item[labelKey]; select.appendChild(option);
+    });
+  }
+  function message(text, isError) { $('message').textContent = text; $('message').className = isError ? 'sub error' : 'sub'; }
+  function loadWorkspaces() {
+    google.script.run.withSuccessHandler(result => {
+      if (!result || !result.ok) return message('Unable to load workspaces.', true);
+      fillSelect($('workspace'), result.workspaces, 'workspace_id', 'name');
+      if (result.workspaces.some(w => w.workspace_id === activeWorkspace)) $('workspace').value = activeWorkspace;
+      else if (result.workspaces.length) { activeWorkspace = result.workspaces[0].workspace_id; $('workspace').value = activeWorkspace; }
+      loadDashboard();
+    }).withFailureHandler(err => message(err.message || String(err), true)).apiListWorkspaces();
+  }
+  function loadDashboard() {
+    google.script.run.withSuccessHandler(renderDashboard)
+      .withFailureHandler(err => { message(err.message || String(err), true); $('tasks').textContent = 'Run setupAgencyOS() in the Apps Script editor, then reload this page.'; })
+      .apiGetDashboard(activeWorkspace);
+  }
+  function renderDashboard(data) {
+    if (!data || !data.ok) return message('Dashboard response was invalid.', true);
+    ['total','queued','running','blocked','completed'].forEach(key => $('m-'+key).textContent = data.counts[key] || 0);
+    $('runtime').textContent = 'AI Gateway: '+data.runtime.aiGateway+' · Worker: '+data.runtime.worker+' · External actions: '+data.runtime.externalActions;
+    renderTasks(data.tasks || []);
+  }
+  function renderTasks(tasks) {
+    const host = $('tasks'); host.replaceChildren();
+    if (!tasks.length) { host.textContent = 'No tasks yet. Add the first work item to begin.'; host.className = 'empty'; return; }
+    host.className = '';
+    tasks.forEach(task => {
+      const row = document.createElement('div'); row.className = 'task';
+      const info = document.createElement('div');
+      const title = document.createElement('div'); title.className = 'task-title'; title.textContent = task.title || 'Untitled task';
+      const meta = document.createElement('div'); meta.className = 'task-meta'; meta.textContent = (task.department || 'Unassigned')+' · '+(task.created_at || '');
+      info.append(title,meta);
+      const state = document.createElement('span'); state.className = 'pill'; state.textContent = task.execution_status || 'UNKNOWN';
+      row.append(info,state); host.appendChild(row);
+    });
+  }
+  $('workspace').addEventListener('change', e => { activeWorkspace = e.target.value; loadDashboard(); });
+  $('refresh').addEventListener('click', () => { message('Refreshing…'); loadWorkspaces(); });
+  $('task-form').addEventListener('submit', e => {
+    e.preventDefault();
+    const button = $('create-task'); button.disabled = true;
+    google.script.run.withSuccessHandler(result => {
+      button.disabled = false; $('task-form').reset(); message('Task added: '+result.taskId); loadDashboard();
+    }).withFailureHandler(err => { button.disabled = false; message(err.message || String(err), true); })
+      .apiCreateTask({workspaceId:activeWorkspace,title:$('task-title').value,department:$('department').value,description:$('task-description').value,priority:$('priority').value});
+  });
+  fillSelect($('department'), DEPARTMENTS.map(name => ({id:name,label:name})), 'id', 'label');
+  loadWorkspaces();
+</script>
+</body>
+</html>
