@@ -91,7 +91,7 @@
   function renderDashboard(data) {
     if (!data || !data.ok) return message('Dashboard response was invalid.', true);
     ['total','queued','running','blocked','completed'].forEach(key => $('m-'+key).textContent = data.counts[key] || 0);
-    $('runtime').textContent = 'AI Gateway: '+data.runtime.aiGateway+' · Worker: '+data.runtime.worker+' · External actions: '+data.runtime.externalActions;
+    $('runtime').textContent = 'AI Gateway: '+data.runtime.aiGateway+' · Model: '+data.runtime.model+' · Worker: '+data.runtime.worker+' · External actions: '+data.runtime.externalActions;
     renderTasks(data.tasks || []);\n    renderApprovals(data.approvals || []);
   }
   function renderApprovals(items) {
