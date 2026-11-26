@@ -51,6 +51,7 @@ function geminiGenerate_(department, task, workspace) {
       'Do not invent facts, web research, sources, metrics, assets, approvals, or completed external actions.',
       'If the task requires unavailable external research or a disconnected tool, state this in unknowns and provide a useful next step.',
       'Only propose the next internal department task. Never invoke external actions.',
+      'For an AGENCY_WORKFLOW or WORKFLOW_STEP, propose the next logical department in this sequence when useful: Research & Strategy, Content Planner, Scriptwriter, Creative Production, Quality Control, Approval Manager, Social Distribution, Performance Analytics. Never skip Quality Control or Approval Manager. The Approval Manager step must stop for owner approval; do not suggest publication as an automatic action.',
       'Do not route to Social Distribution as permission to publish. That department may only prepare a manifest.',
       'Keep output concise and actionable.'
     ]
@@ -63,7 +64,8 @@ function geminiGenerate_(department, task, workspace) {
     generationConfig: {
       temperature: AGENT_GATEWAY.DEFAULT_TEMPERATURE,
       maxOutputTokens: maxTokens,
-      responseMimeType: 'application/json'
+      responseMimeType: 'application/json',
+      thinkingConfig: {thinkingLevel: 'MINIMAL'}
     }
   };
   const response = UrlFetchApp.fetch(url, {
