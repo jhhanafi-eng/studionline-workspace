@@ -9,6 +9,7 @@ const AGENCY_OS = {
     Workspaces: ['workspace_id', 'name', 'type', 'status', 'timezone', 'brand_brief_json', 'created_at', 'updated_at'],
     Tasks: ['task_id', 'workspace_id', 'project_id', 'campaign_id', 'department', 'task_type', 'title', 'description', 'priority', 'execution_status', 'lifecycle_status', 'assigned_agent', 'input_json', 'output_json', 'attempt_count', 'max_attempts', 'run_after', 'lease_until', 'idempotency_key', 'error_message', 'workflow_id', 'parent_task_id', 'step_index', 'created_at', 'updated_at'],
     AgentRuns: ['run_id', 'workspace_id', 'task_id', 'department', 'provider', 'model', 'status', 'usage_json', 'output_json', 'created_at'],
+    Approvals: ['approval_id', 'workspace_id', 'task_id', 'payload_hash', 'decision', 'decided_by', 'decided_at', 'created_at'],
     AuditLog: ['event_id', 'workspace_id', 'actor_type', 'actor_id', 'event_type', 'entity_type', 'entity_id', 'details_json', 'created_at']
   },
   DEPARTMENTS: ['Research & Strategy', 'Content Planner', 'Scriptwriter', 'Creative Production', 'Quality Control', 'Approval Manager', 'Social Distribution', 'Performance Analytics']
@@ -43,7 +44,6 @@ function setupAgencyOS() {
     ensureHeaders_(sheet, AGENCY_OS.SHEETS[name]);
   });
 
-  const props = PropertiesService.getScriptProperties();
   if (!props.getProperty('AGENCY_OS_MODEL')) props.setProperty('AGENCY_OS_MODEL', 'gemini-3.5-flash-lite');
   if (!props.getProperty('AGENCY_OS_WORKERS_PAUSED')) props.setProperty('AGENCY_OS_WORKERS_PAUSED', 'true');
   if (!props.getProperty('AGENCY_OS_MAX_DAILY_RUNS')) props.setProperty('AGENCY_OS_MAX_DAILY_RUNS', '30');
@@ -141,6 +141,81 @@ function apiCreateTask(input) {
     appendAudit_(workspaceId, 'OWNER', 'dashboard', 'TASK_CREATED', 'Task', id, {department: department, title: title});
     return {ok: true, taskId: id, executionStatus: 'QUEUED'};
   });
+}
+
+function apiCreateWorkflow(input) {
+  input = input || {};
+  const workspaceId = String(input.workspaceId || 'ws_studionline');
+  requireWorkspace_(workspaceId);
+  const objective = String(input.objective || '').trim();
+  if (!objective) throw new Error('Workflow objective is required.');
+  const now = now_();
+  const id = 'wf_' + Utilities.getUuid().replace(/-/g, '').slice(0, 16);
+  const taskId = 'task_' + Utilities.getUuid().replace(/-/g, '').slice(0, 16);
+  const audience = String(input.audience || '');
+  const channels = Array.isArray(input.channels) ? input.channels : [];
+  appendRow_('Tasks', {
+    task_id: taskId, workspace_id: workspaceId, project_id: '', campaign_id: id,
+    department: 'Research & Strategy', task_type: 'AGENCY_WORKFLOW',
+    title: objective.slice(0, 180),
+    description: String(input.context || 'Research the objective, define the strategy, and propose the next internal workflow step.'),
+    priority: String(input.priority || 'NORMAL').toUpperCase(),
+    execution_status: 'QUEUED', lifecycle_status: 'IDEA',
+    assigned_agent: 'Research & Strategy',
+    input_json: JSON.stringify({objective: objective, audience: audience, channels: channels, offer: String(input.offer || ''), constraints: String(input.constraints || '')}),
+    output_json: '', attempt_count: 0, max_attempts: 3,
+    run_after: now, lease_until: '', idempotency_key: id,
+    error_message: '', workflow_id: id, parent_task_id: '', step_index: 0,
+    created_at: now, updated_at: now
+  });
+  appendAudit_(workspaceId, 'OWNER', 'dashboard', 'WORKFLOW_CREATED', 'Workflow', id, {objective: objective, first_task_id: taskId});
+  return {ok: true, workflowId: id, firstTaskId: taskId, status: 'QUEUED'};
+}
+
+function apiDecideTaskApproval(taskId, decision) {
+  const id = String(taskId || '');
+  const choice = String(decision || '').toUpperCase();
+  if (!id || !['APPROVE', 'REJECT'].includes(choice)) throw new Error('A task ID and APPROVE or REJECT decision are required.');
+  return withLock_(function() {
+    const task = readRows_('Tasks').find(function(row) { return row.task_id === id; });
+    if (!task) throw new Error('Task not found.');
+    if (task.execution_status !== 'WAITING_APPROVAL') throw new Error('Task is not waiting for approval.');
+    const output = safeJson_(task.output_json);
+    const payload = JSON.stringify(output);
+    const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, payload, Utilities.Charset.UTF_8);
+    const hash = digest.map(function(byte) { return ('0' + ((byte + 256) % 256).toString(16)).slice(-2); }).join('');
+    const now = now_();
+    appendRow_('Approvals', {
+      approval_id: 'apr_' + Utilities.getUuid().replace(/-/g, '').slice(0, 16),
+      workspace_id: task.workspace_id, task_id: id, payload_hash: hash,
+      decision: choice, decided_by: 'OWNER', decided_at: now, created_at: now
+    });
+    if (choice === 'APPROVE') {
+      updateTaskStatusFromApproval_(id, 'SUCCEEDED', now);
+      if (output.next_department && output.next_task_title) createFollowupTask_(task, output);
+    } else {
+      updateTaskStatusFromApproval_(id, 'REJECTED', now);
+    }
+    appendAudit_(task.workspace_id, 'OWNER', 'dashboard', 'TASK_' + choice, 'Task', id, {payload_hash: hash});
+    return {ok: true, taskId: id, decision: choice, payloadHash: hash};
+  });
+}
+
+function updateTaskStatusFromApproval_(taskId, status, timestamp) {
+  const sheet = getDatabase_().getSheetByName('Tasks');
+  const values = sheet.getDataRange().getValues();
+  const headers = values[0].map(String);
+  const idIndex = headers.indexOf('task_id');
+  const statusIndex = headers.indexOf('execution_status');
+  const updatedIndex = headers.indexOf('updated_at');
+  for (let r = 1; r < values.length; r++) {
+    if (String(values[r][idIndex]) === String(taskId)) {
+      sheet.getRange(r + 1, statusIndex + 1).setValue(status);
+      sheet.getRange(r + 1, updatedIndex + 1).setValue(timestamp);
+      return;
+    }
+  }
+  throw new Error('Task not found while applying approval.');
 }
 
 function apiListWorkspaces() {
