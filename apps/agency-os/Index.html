@@ -55,6 +55,10 @@
         <div class="foot">Creates the first Research & Strategy task. Follow-up tasks are proposed by the agent gateway and run only while workers are enabled. Approval Manager pauses for owner review.</div>
       </div>
     </section>
+    <section class="panel" style="margin-top:14px">
+      <h3>Approval Inbox</h3>
+      <div id="approvals" class="empty">No items waiting for approval.</div>
+    </section>
     <div class="foot">Workspace data is scoped by workspace ID. Deployment and database initialization must be performed by the owner in Google Apps Script.</div>
     <div id="message" class="sub" role="status" aria-live="polite"></div>
   </main>
@@ -88,7 +92,25 @@
     if (!data || !data.ok) return message('Dashboard response was invalid.', true);
     ['total','queued','running','blocked','completed'].forEach(key => $('m-'+key).textContent = data.counts[key] || 0);
     $('runtime').textContent = 'AI Gateway: '+data.runtime.aiGateway+' · Worker: '+data.runtime.worker+' · External actions: '+data.runtime.externalActions;
-    renderTasks(data.tasks || []);
+    renderTasks(data.tasks || []);\n    renderApprovals(data.approvals || []);
+  }
+  function renderApprovals(items) {
+    const host = $('approvals'); host.replaceChildren();
+    if (!items.length) { host.textContent = 'No items waiting for approval.'; host.className = 'empty'; return; }
+    host.className = '';
+    items.forEach(item => {
+      let output = {};
+      try { output = JSON.parse(item.output_json || '{}'); } catch (e) {}
+      const card = document.createElement('div'); card.className = 'task';
+      const info = document.createElement('div');
+      const title = document.createElement('div'); title.className = 'task-title'; title.textContent = item.title || 'Approval request';
+      const summary = document.createElement('div'); summary.className = 'task-meta'; summary.textContent = (output.summary || output.deliverable || 'Review required').slice(0, 280);
+      info.append(title, summary);
+      const actions = document.createElement('div'); actions.style.display = 'flex'; actions.style.gap = '6px';
+      const approve = document.createElement('button'); approve.textContent = 'Approve'; approve.dataset.taskId = item.task_id; approve.dataset.decision = 'APPROVE';
+      const reject = document.createElement('button'); reject.textContent = 'Reject'; reject.dataset.taskId = item.task_id; reject.dataset.decision = 'REJECT'; reject.style.background = '#7F1D1D';
+      actions.append(approve, reject); card.append(info, actions); host.appendChild(card);
+    });
   }
   function renderTasks(tasks) {
     const host = $('tasks'); host.replaceChildren();
@@ -104,6 +126,14 @@
       row.append(info,state); host.appendChild(row);
     });
   }
+  $('approvals').addEventListener('click', e => {
+    const button = e.target.closest('button[data-task-id]');
+    if (!button) return;
+    button.disabled = true;
+    google.script.run.withSuccessHandler(result => { message('Approval recorded: '+result.decision); loadDashboard(); })
+      .withFailureHandler(err => { button.disabled = false; message(err.message || String(err), true); })
+      .apiDecideTaskApproval(button.dataset.taskId, button.dataset.decision);
+  });
   $('workspace').addEventListener('change', e => { activeWorkspace = e.target.value; loadDashboard(); });
   $('refresh').addEventListener('click', () => { message('Refreshing…'); loadWorkspaces(); });
   $('workflow-form').addEventListener('submit', e => {
