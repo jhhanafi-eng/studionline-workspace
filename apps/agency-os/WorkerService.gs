@@ -9,6 +9,7 @@ const WORKER_CONFIG = {
   MAX_TASKS_PER_TICK: 1,
   MAX_DAILY_RUNS: 30,
   MAX_RETRIES: 3,
+  MAX_WORKFLOW_STEPS: 8,
   BASE_RETRY_SECONDS: 90
 };
 
@@ -114,6 +115,22 @@ function executeClaimedTask_(task) {
 function createFollowupTask_(parent, output) {
   const department = String(output.next_department || '');
   if (AGENCY_OS.DEPARTMENTS.indexOf(department) === -1) return;
+  const stepIndex = Number(parent.step_index || 0);
+  if (stepIndex >= WORKER_CONFIG.MAX_WORKFLOW_STEPS - 1) {
+    appendAudit_(parent.workspace_id, 'SYSTEM', 'workflow-engine', 'WORKFLOW_STEP_LIMIT_REACHED', 'Task', parent.task_id, {limit: WORKER_CONFIG.MAX_WORKFLOW_STEPS});
+    return;
+  }
+  const workflowTask = parent.task_type === 'AGENCY_WORKFLOW' || parent.task_type === 'WORKFLOW_STEP';
+  if (workflowTask) {
+    const pipeline = ['Research & Strategy', 'Content Planner', 'Scriptwriter', 'Creative Production', 'Quality Control', 'Approval Manager', 'Social Distribution', 'Performance Analytics'];
+    const expected = pipeline[pipeline.indexOf(parent.department) + 1] || '';
+    if (!expected || department !== expected) {
+      appendAudit_(parent.workspace_id, 'SYSTEM', 'workflow-engine', 'FOLLOWUP_ROUTE_REJECTED', 'Task', parent.task_id, {expected_department: expected, proposed_department: department});
+      return;
+    }
+  }
+  const idempotencyKey = parent.task_id + '->' + department;
+  if (readRows_('Tasks').some(function(row) { return row.idempotency_key === idempotencyKey; })) return;
   const id = 'task_' + Utilities.getUuid().replace(/-/g, '').slice(0, 16);
   const now = now_();
   appendRow_('Tasks', {
@@ -135,11 +152,11 @@ function createFollowupTask_(parent, output) {
     max_attempts: WORKER_CONFIG.MAX_RETRIES,
     run_after: now,
     lease_until: '',
-    idempotency_key: parent.task_id + '->' + department,
+    idempotency_key: idempotencyKey,
     error_message: '',
     workflow_id: parent.workflow_id || parent.task_id,
     parent_task_id: parent.task_id,
-    step_index: Number(parent.step_index || 0) + 1,
+    step_index: stepIndex + 1,
     created_at: now,
     updated_at: now
   });
