@@ -1,7 +1,7 @@
 /**
  * Karyawan Agency STUDIONLINE OS
- * Phase 0 vertical slice: workspace registry, task intake, dashboard and audit log.
- * AI execution, triggers and external actions are intentionally disabled until configured.
+ * Agency OS foundation: workspace registry, workflow intake, task queue, approvals and audit log.
+ * Gemini workers are paused by default; external actions remain disabled.
  */
 const AGENCY_OS = {
   DB_PROPERTY: 'AGENCY_OS_DB_ID',
@@ -89,7 +89,8 @@ function apiGetDashboard(workspaceId) {
     else if (s === 'FAILED') counts.failed++;
     else if (s === 'SUCCEEDED') counts.completed++;
   });
-  return {ok: true, workspaceId: selectedId, workspaces: workspaces, counts: counts, tasks: recent, runtime: {aiGateway: PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY') ? 'CONFIGURED' : 'API_KEY_REQUIRED', provider: 'gemini', model: PropertiesService.getScriptProperties().getProperty('AGENCY_OS_MODEL') || 'gemini-3.5-flash-lite', worker: PropertiesService.getScriptProperties().getProperty('AGENCY_OS_WORKERS_PAUSED') === 'false' ? 'ENABLED' : 'PAUSED', externalActions: 'DISABLED'}};
+  const approvals = tasks.filter(function(t) { return t.execution_status === 'WAITING_APPROVAL'; }).map(function(t) { return {task_id: t.task_id, title: t.title, department: t.department, output_json: t.output_json, updated_at: t.updated_at}; });
+  return {ok: true, workspaceId: selectedId, workspaces: workspaces, counts: counts, tasks: recent, approvals: approvals, runtime: {aiGateway: PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY') ? 'CONFIGURED' : 'API_KEY_REQUIRED', provider: 'gemini', model: PropertiesService.getScriptProperties().getProperty('AGENCY_OS_MODEL') || 'gemini-3.5-flash-lite', worker: PropertiesService.getScriptProperties().getProperty('AGENCY_OS_WORKERS_PAUSED') === 'false' ? 'ENABLED' : 'PAUSED', externalActions: 'DISABLED'}};
 }
 
 function apiCreateWorkspace(input) {
