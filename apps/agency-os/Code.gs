@@ -90,7 +90,8 @@ function apiGetDashboard(workspaceId) {
     else if (s === 'SUCCEEDED') counts.completed++;
   });
   const approvals = tasks.filter(function(t) { return t.execution_status === 'WAITING_APPROVAL'; }).map(function(t) { return {task_id: t.task_id, title: t.title, department: t.department, output_json: t.output_json, updated_at: t.updated_at}; });
-  return {ok: true, workspaceId: selectedId, workspaces: workspaces, counts: counts, tasks: recent, approvals: approvals, runtime: {aiGateway: PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY') ? 'CONFIGURED' : 'API_KEY_REQUIRED', provider: 'gemini', model: PropertiesService.getScriptProperties().getProperty('AGENCY_OS_MODEL') || 'gemini-3.5-flash-lite', worker: PropertiesService.getScriptProperties().getProperty('AGENCY_OS_WORKERS_PAUSED') === 'false' ? 'ENABLED' : 'PAUSED', externalActions: 'DISABLED'}};
+  const workerStatus = agencyWorkerStatus();
+  return {ok: true, workspaceId: selectedId, workspaces: workspaces, counts: counts, tasks: recent, approvals: approvals, runtime: {aiGateway: PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY') ? 'CONFIGURED' : 'API_KEY_REQUIRED', provider: 'gemini', model: workerStatus.model, worker: workerStatus.worker, triggerInstalled: workerStatus.triggerInstalled, externalActions: 'DISABLED'}};
 }
 
 function apiCreateWorkspace(input) {
@@ -265,7 +266,8 @@ function readRows_(sheetName) {
 
 function appendRow_(sheetName, record) {
   const sheet = getDatabase_().getSheetByName(sheetName);
-  const headers = AGENCY_OS.SHEETS[sheetName];
+  if (!sheet || sheet.getLastRow() === 0) throw new Error('Sheet is missing or has no header row: ' + sheetName);
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(String);
   sheet.appendRow(headers.map(function(header) {
     return record[header] === undefined ? '' : record[header];
   }));
