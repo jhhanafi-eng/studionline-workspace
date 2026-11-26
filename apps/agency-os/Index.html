@@ -44,21 +44,21 @@
     <section class="layout">
       <div class="panel"><h3>Recent Tasks</h3><div id="tasks" class="empty">Loading tasks…</div></div>
       <div class="panel">
-        <h3>Create Work Item</h3>
-        <form id="task-form" class="form">
-          <label>Task title<input id="task-title" required maxlength="180" placeholder="e.g. Research Motionflow Creator Kit audience"></label>
-          <label>Department<select id="department"></select></label>
-          <label>Description<textarea id="task-description" placeholder="What should this department deliver?"></textarea></label>
-          <label>Priority<select id="priority"><option>NORMAL</option><option>HIGH</option><option>LOW</option></select></label>
-          <button id="create-task" type="submit">Add to Task Queue</button>
+        <h3>Start an Agency Workflow</h3>
+        <form id="workflow-form" class="form">
+          <label>Business objective<input id="workflow-objective" required maxlength="180" placeholder="e.g. Build a 30-day launch campaign for Motionflow Creator Kit"></label>
+          <label>Target audience<input id="workflow-audience" maxlength="240" placeholder="e.g. Beginner short-form video creators"></label>
+          <label>Channels<input id="workflow-channels" maxlength="240" placeholder="Pinterest, Instagram, TikTok, YouTube"></label>
+          <label>Additional context<textarea id="workflow-context" placeholder="Offer, constraints, deliverables, timeline, known facts…"></textarea></label>
+          <button id="create-workflow" type="submit">Start Autonomous Workflow</button>
         </form>
+        <div class="foot">Creates the first Research & Strategy task. Follow-up tasks are proposed by the agent gateway and run only while workers are enabled. Approval Manager pauses for owner review.</div>
       </div>
     </section>
     <div class="foot">Workspace data is scoped by workspace ID. Deployment and database initialization must be performed by the owner in Google Apps Script.</div>
     <div id="message" class="sub" role="status" aria-live="polite"></div>
   </main>
 <script>
-  const DEPARTMENTS = ['Research & Strategy','Content Planner','Scriptwriter','Creative Production','Quality Control','Approval Manager','Social Distribution','Performance Analytics'];
   const $ = id => document.getElementById(id);
   let activeWorkspace = 'ws_studionline';
 
@@ -106,15 +106,15 @@
   }
   $('workspace').addEventListener('change', e => { activeWorkspace = e.target.value; loadDashboard(); });
   $('refresh').addEventListener('click', () => { message('Refreshing…'); loadWorkspaces(); });
-  $('task-form').addEventListener('submit', e => {
+  $('workflow-form').addEventListener('submit', e => {
     e.preventDefault();
-    const button = $('create-task'); button.disabled = true;
+    const button = $('create-workflow'); button.disabled = true;
+    const channels = $('workflow-channels').value.split(',').map(x => x.trim()).filter(Boolean);
     google.script.run.withSuccessHandler(result => {
-      button.disabled = false; $('task-form').reset(); message('Task added: '+result.taskId); loadDashboard();
+      button.disabled = false; $('workflow-form').reset(); message('Workflow created: '+result.workflowId+' · First task: '+result.firstTaskId); loadDashboard();
     }).withFailureHandler(err => { button.disabled = false; message(err.message || String(err), true); })
-      .apiCreateTask({workspaceId:activeWorkspace,title:$('task-title').value,department:$('department').value,description:$('task-description').value,priority:$('priority').value});
+      .apiCreateWorkflow({workspaceId:activeWorkspace,objective:$('workflow-objective').value,audience:$('workflow-audience').value,channels:channels,context:$('workflow-context').value});
   });
-  fillSelect($('department'), DEPARTMENTS.map(name => ({id:name,label:name})), 'id', 'label');
   loadWorkspaces();
 </script>
 </body>
