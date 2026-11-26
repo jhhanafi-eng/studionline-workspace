@@ -21,9 +21,13 @@ function agencyWorkerTick() {
     pauseAgencyWorkers();
     throw new Error('Missing GEMINI_API_KEY. Workers have been paused.');
   }
-  enforceDailyBudget_();
   const task = claimNextTask_();
   if (!task) return {ok: true, processed: 0, reason: 'No eligible queued tasks.'};
+  if (!reserveDailyBudget_()) {
+    updateTask_(task.task_id, {execution_status: 'QUEUED', lease_until: '', attempt_count: Math.max(0, Number(task.attempt_count || 1) - 1), updated_at: now_()});
+    pauseAgencyWorkers();
+    return {ok: false, paused: true, reason: 'Daily AI run limit reached.'};
+  }
   executeClaimedTask_(task);
   return {ok: true, processed: 1, taskId: task.task_id};
 }
@@ -85,8 +89,9 @@ function executeClaimedTask_(task) {
     const output = result.output;
     const completedAt = now_();
 
+    const approvalGate = task.department === 'Approval Manager' && output.status !== 'BLOCKED';
     updateTask_(task.task_id, {
-      execution_status: output.status === 'BLOCKED' ? 'BLOCKED' : 'SUCCEEDED',
+      execution_status: output.status === 'BLOCKED' ? 'BLOCKED' : (approvalGate ? 'WAITING_APPROVAL' : 'SUCCEEDED'),
       lifecycle_status: output.status === 'BLOCKED' ? 'BLOCKED' : lifecycleForDepartment_(task.department),
       output_json: JSON.stringify(output),
       error_message: '',
@@ -98,7 +103,7 @@ function executeClaimedTask_(task) {
       provider: result.provider, model: result.model, finishReason: result.finishReason
     });
 
-    if (output.status !== 'BLOCKED' && output.next_department && output.next_task_title) {
+    if (output.status !== 'BLOCKED' && !approvalGate && output.next_department && output.next_task_title) {
       createFollowupTask_(task, output);
     }
   } catch (err) {
@@ -207,17 +212,17 @@ function lifecycleForDepartment_(department) {
   return map[department] || 'IDEA';
 }
 
-function enforceDailyBudget_() {
-  const props = PropertiesService.getScriptProperties();
-  const today = Utilities.formatDate(new Date(), 'Asia/Jakarta', 'yyyy-MM-dd');
-  const key = 'AGENCY_OS_RUNS_' + today;
-  const used = Number(props.getProperty(key) || 0);
-  const limit = Number(props.getProperty('AGENCY_OS_MAX_DAILY_RUNS') || WORKER_CONFIG.MAX_DAILY_RUNS);
-  if (used >= limit) {
-    pauseAgencyWorkers();
-    throw new Error('Daily AI run limit reached (' + limit + '). Workers paused.');
-  }
-  props.setProperty(key, String(used + 1));
+function reserveDailyBudget_() {
+  return withLock_(function() {
+    const props = PropertiesService.getScriptProperties();
+    const today = Utilities.formatDate(new Date(), 'Asia/Jakarta', 'yyyy-MM-dd');
+    const key = 'AGENCY_OS_RUNS_' + today;
+    const used = Number(props.getProperty(key) || 0);
+    const limit = Number(props.getProperty('AGENCY_OS_MAX_DAILY_RUNS') || WORKER_CONFIG.MAX_DAILY_RUNS);
+    if (used >= limit) return false;
+    props.setProperty(key, String(used + 1));
+    return true;
+  });
 }
 
 function enableAgencyWorkers() {
