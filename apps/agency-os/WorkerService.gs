@@ -42,14 +42,15 @@ function claimNextTask_() {
       const status = String(task.execution_status || '').toUpperCase();
       const lease = task.lease_until ? new Date(task.lease_until).getTime() : 0;
       if ((status === 'CLAIMED' || status === 'RUNNING') && lease && lease < now) {
+        const exhausted = Number(task.attempt_count || 0) >= Math.min(WORKER_CONFIG.MAX_RETRIES, Number(task.max_attempts || WORKER_CONFIG.MAX_RETRIES));
         updateTask_(task.task_id, {
-          execution_status: 'RETRY_WAIT',
-          run_after: new Date(now + WORKER_CONFIG.BASE_RETRY_SECONDS * 1000).toISOString(),
+          execution_status: exhausted ? 'FAILED' : 'RETRY_WAIT',
+          run_after: exhausted ? '' : new Date(now + WORKER_CONFIG.BASE_RETRY_SECONDS * 1000).toISOString(),
           lease_until: '',
-          error_message: 'Worker lease expired; task returned to retry queue.',
+          error_message: exhausted ? 'Worker lease expired and retry limit was reached.' : 'Worker lease expired; task returned to retry queue.',
           updated_at: now_()
         });
-        appendAudit_(task.workspace_id, 'SYSTEM', 'worker', 'TASK_LEASE_EXPIRED', 'Task', task.task_id, {});
+        appendAudit_(task.workspace_id, 'SYSTEM', 'worker', exhausted ? 'TASK_FAILED_AFTER_LEASE_EXPIRY' : 'TASK_LEASE_EXPIRED', 'Task', task.task_id, {attempt_count: task.attempt_count});
       }
     });
 
@@ -60,7 +61,9 @@ function claimNextTask_() {
     });
     fresh.sort(function(a, b) {
       const priority = {HIGH: 0, NORMAL: 1, LOW: 2};
-      const p = (priority[String(a.priority).toUpperCase()] || 1) - (priority[String(b.priority).toUpperCase()] || 1);
+      const pa = priority[String(a.priority).toUpperCase()] !== undefined ? priority[String(a.priority).toUpperCase()] : 1;
+      const pb = priority[String(b.priority).toUpperCase()] !== undefined ? priority[String(b.priority).toUpperCase()] : 1;
+      const p = pa - pb;
       return p || new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
     });
     if (!fresh.length) return null;
