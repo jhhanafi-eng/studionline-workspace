@@ -1,0 +1,208 @@
+/**
+ * Karyawan Agency STUDIONLINE OS
+ * Phase 0 vertical slice: workspace registry, task intake, dashboard and audit log.
+ * AI execution, triggers and external actions are intentionally disabled until configured.
+ */
+const AGENCY_OS = {
+  DB_PROPERTY: 'AGENCY_OS_DB_ID',
+  SHEETS: {
+    Workspaces: ['workspace_id', 'name', 'type', 'status', 'timezone', 'brand_brief_json', 'created_at', 'updated_at'],
+    Tasks: ['task_id', 'workspace_id', 'project_id', 'campaign_id', 'department', 'task_type', 'title', 'description', 'priority', 'execution_status', 'lifecycle_status', 'assigned_agent', 'input_json', 'output_json', 'attempt_count', 'max_attempts', 'created_at', 'updated_at'],
+    AuditLog: ['event_id', 'workspace_id', 'actor_type', 'actor_id', 'event_type', 'entity_type', 'entity_id', 'details_json', 'created_at']
+  },
+  DEPARTMENTS: ['Research & Strategy', 'Content Planner', 'Scriptwriter', 'Creative Production', 'Quality Control', 'Approval Manager', 'Social Distribution', 'Performance Analytics']
+};
+
+function doGet() {
+  return HtmlService.createHtmlOutputFromFile('Index')
+    .setTitle('Karyawan Agency STUDIONLINE')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+/**
+ * Run once manually from the Apps Script editor as the owner.
+ * Creates the operational spreadsheet and required tabs.
+ */
+function setupAgencyOS() {
+  const props = PropertiesService.getScriptProperties();
+  let dbId = props.getProperty(AGENCY_OS.DB_PROPERTY);
+  let ss;
+
+  if (dbId) {
+    ss = SpreadsheetApp.openById(dbId);
+  } else {
+    ss = SpreadsheetApp.create('STUDIONLINE Agency OS Database');
+    dbId = ss.getId();
+    props.setProperty(AGENCY_OS.DB_PROPERTY, dbId);
+  }
+
+  Object.keys(AGENCY_OS.SHEETS).forEach(function(name) {
+    let sheet = ss.getSheetByName(name);
+    if (!sheet) sheet = ss.insertSheet(name);
+    const headers = AGENCY_OS.SHEETS[name];
+    if (sheet.getLastRow() === 0) {
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+      sheet.setFrozenRows(1);
+    }
+  });
+
+  const workspaces = readRows_('Workspaces');
+  const ownerWorkspace = workspaces.find(function(row) { return row.workspace_id === 'ws_studionline'; });
+  if (!ownerWorkspace) {
+    const now = now_();
+    appendRow_('Workspaces', {
+      workspace_id: 'ws_studionline',
+      name: 'STUDIONLINE',
+      type: 'OWNER',
+      status: 'ACTIVE',
+      timezone: 'Asia/Jakarta',
+      brand_brief_json: JSON.stringify({positioning: 'Digital Design & Automation Studio', objective_90_days: 'Digital product sales', audience: 'SMBs', geography: ['Indonesia', 'International'], platforms: ['Pinterest', 'Instagram', 'TikTok', 'YouTube', 'Facebook'], cadence: 'Flexible', usp: null}),
+      created_at: now,
+      updated_at: now
+    });
+    appendAudit_('ws_studionline', 'SYSTEM', 'setup', 'WORKSPACE_CREATED', 'Workspace', 'ws_studionline', {source: 'setupAgencyOS'});
+  }
+
+  return {
+    ok: true,
+    databaseId: dbId,
+    databaseUrl: ss.getUrl(),
+    sheets: Object.keys(AGENCY_OS.SHEETS),
+    message: 'Database initialized. AI workers and external actions remain disabled.'
+  };
+}
+
+function apiGetDashboard(workspaceId) {
+  const workspaces = readRows_('Workspaces').filter(function(w) { return w.status === 'ACTIVE'; });
+  const selectedId = workspaceId || 'ws_studionline';
+  requireWorkspace_(selectedId);
+  const tasks = readRows_('Tasks').filter(function(t) { return t.workspace_id === selectedId; });
+  const recent = tasks.slice(-12).reverse();
+  const counts = {total: tasks.length, queued: 0, running: 0, blocked: 0, failed: 0, completed: 0};
+  tasks.forEach(function(task) {
+    const s = String(task.execution_status || '').toUpperCase();
+    if (s === 'QUEUED') counts.queued++;
+    else if (s === 'RUNNING' || s === 'CLAIMED') counts.running++;
+    else if (s === 'BLOCKED') counts.blocked++;
+    else if (s === 'FAILED') counts.failed++;
+    else if (s === 'SUCCEEDED') counts.completed++;
+  });
+  return {ok: true, workspaceId: selectedId, workspaces: workspaces, counts: counts, tasks: recent, runtime: {aiGateway: 'NOT_CONFIGURED', worker: 'DISABLED', externalActions: 'DISABLED'}};
+}
+
+function apiCreateWorkspace(input) {
+  input = input || {};
+  const name = String(input.name || '').trim();
+  const type = String(input.type || 'CLIENT').toUpperCase();
+  if (!name) throw new Error('Workspace name is required.');
+  if (!['OWNER', 'CLIENT'].includes(type)) throw new Error('Workspace type must be OWNER or CLIENT.');
+  if (type === 'OWNER' && readRows_('Workspaces').some(function(w) { return w.type === 'OWNER'; })) {
+    throw new Error('An OWNER workspace already exists.');
+  }
+
+  return withLock_(function() {
+    const now = now_();
+    const id = 'ws_' + Utilities.getUuid().replace(/-/g, '').slice(0, 16);
+    appendRow_('Workspaces', {
+      workspace_id: id, name: name, type: type, status: 'ACTIVE',
+      timezone: String(input.timezone || 'Asia/Jakarta'),
+      brand_brief_json: JSON.stringify(input.brandBrief || {}),
+      created_at: now, updated_at: now
+    });
+    appendAudit_(id, 'OWNER', 'dashboard', 'WORKSPACE_CREATED', 'Workspace', id, {name: name, type: type});
+    return {ok: true, workspaceId: id};
+  });
+}
+
+function apiCreateTask(input) {
+  input = input || {};
+  const workspaceId = String(input.workspaceId || 'ws_studionline');
+  requireWorkspace_(workspaceId);
+  const title = String(input.title || '').trim();
+  const department = String(input.department || '').trim();
+  if (!title) throw new Error('Task title is required.');
+  if (!AGENCY_OS.DEPARTMENTS.includes(department)) throw new Error('Unknown department.');
+
+  return withLock_(function() {
+    const now = now_();
+    const id = 'task_' + Utilities.getUuid().replace(/-/g, '').slice(0, 16);
+    appendRow_('Tasks', {
+      task_id: id, workspace_id: workspaceId, project_id: '', campaign_id: '',
+      department: department, task_type: String(input.taskType || 'GENERAL'),
+      title: title, description: String(input.description || ''),
+      priority: String(input.priority || 'NORMAL').toUpperCase(),
+      execution_status: 'QUEUED', lifecycle_status: 'IDEA',
+      assigned_agent: department, input_json: JSON.stringify(input.payload || {}),
+      output_json: '', attempt_count: 0, max_attempts: 3,
+      created_at: now, updated_at: now
+    });
+    appendAudit_(workspaceId, 'OWNER', 'dashboard', 'TASK_CREATED', 'Task', id, {department: department, title: title});
+    return {ok: true, taskId: id, executionStatus: 'QUEUED'};
+  });
+}
+
+function apiListWorkspaces() {
+  return {ok: true, workspaces: readRows_('Workspaces').filter(function(w) { return w.status === 'ACTIVE'; })};
+}
+
+function apiListTasks(workspaceId) {
+  const id = workspaceId || 'ws_studionline';
+  requireWorkspace_(id);
+  return {ok: true, tasks: readRows_('Tasks').filter(function(t) { return t.workspace_id === id; }).reverse()};
+}
+
+function getDatabase_() {
+  const id = PropertiesService.getScriptProperties().getProperty(AGENCY_OS.DB_PROPERTY);
+  if (!id) throw new Error('Database not initialized. Run setupAgencyOS() once from the Apps Script editor.');
+  return SpreadsheetApp.openById(id);
+}
+
+function readRows_(sheetName) {
+  const sheet = getDatabase_().getSheetByName(sheetName);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  const values = sheet.getDataRange().getValues();
+  const headers = values.shift().map(String);
+  return values.filter(function(row) { return row.some(function(cell) { return cell !== ''; }); })
+    .map(function(row) {
+      const obj = {};
+      headers.forEach(function(header, index) {
+        const value = row[index];
+        obj[header] = value instanceof Date ? value.toISOString() : value;
+      });
+      return obj;
+    });
+}
+
+function appendRow_(sheetName, record) {
+  const sheet = getDatabase_().getSheetByName(sheetName);
+  const headers = AGENCY_OS.SHEETS[sheetName];
+  sheet.appendRow(headers.map(function(header) {
+    return record[header] === undefined ? '' : record[header];
+  }));
+}
+
+function appendAudit_(workspaceId, actorType, actorId, eventType, entityType, entityId, details) {
+  appendRow_('AuditLog', {
+    event_id: 'evt_' + Utilities.getUuid().replace(/-/g, '').slice(0, 16),
+    workspace_id: workspaceId, actor_type: actorType, actor_id: actorId,
+    event_type: eventType, entity_type: entityType, entity_id: entityId,
+    details_json: JSON.stringify(details || {}), created_at: now_()
+  });
+}
+
+function requireWorkspace_(workspaceId) {
+  const found = readRows_('Workspaces').some(function(w) {
+    return w.workspace_id === workspaceId && w.status === 'ACTIVE';
+  });
+  if (!found) throw new Error('Workspace not found or inactive: ' + workspaceId);
+}
+
+function withLock_(callback) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try { return callback(); } finally { lock.releaseLock(); }
+}
+
+function now_() {
+  return new Date().toISOString();
+}
